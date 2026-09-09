@@ -40,14 +40,15 @@ export function drawPanel(c: DrawContext, p: Panel) {
 function bodyPoints(b: Balloon): Point[] {
   const points: Point[] = [],
     cx = b.width / 2,
-    cy = b.height / 2;
-  const rounded = b.kind === 'rounded' || b.kind === 'caption';
-  for (let i = 0; i < 80; i++) {
-    const a = (i / 80) * Math.PI * 2;
+    cy = b.height / 2,
+    count = b.kind === 'shout' ? 40 : b.kind === 'thought' ? 120 : 96;
+  const rounded = b.kind === 'rounded';
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
     let factor = 1;
-    if (b.kind === 'shout') factor = i % 4 === 0 ? 1.08 : 0.9;
+    if (b.kind === 'shout') factor = i % 2 === 0 ? 1.08 : 0.76;
     if (b.kind === 'electronic') factor = i % 4 < 2 ? 1 : 0.91;
-    if (b.kind === 'thought') factor = 1 + 0.055 * Math.sin(a * 12);
+    if (b.kind === 'thought') factor = 1 + 0.105 * Math.cos(a * 10) + 0.018 * Math.cos(a * 5 + 0.8);
     if (b.kind === 'wavy') factor = 1 + 0.025 * Math.sin(a * 15);
     const ca = Math.cos(a),
       sa = Math.sin(a);
@@ -59,17 +60,28 @@ function bodyPoints(b: Balloon): Point[] {
   return points;
 }
 export function drawBalloon(c: DrawContext, b: Balloon) {
-  const points = bodyPoints(b);
   c.save();
   c.lineWidth = b.strokeWidth;
   c.strokeStyle = b.stroke;
   c.fillStyle = b.fill === 'transparent' ? '#ffffff00' : b.fill;
   c.lineJoin = 'round';
+  if (b.kind === 'caption') {
+    c.beginPath();
+    if (b.shape === 'rect') c.rect(0, 0, b.width, b.height);
+    else c.roundRect(0, 0, b.width, b.height, Math.min(24, b.width / 8, b.height / 4));
+    c.fill();
+    if (b.strokeWidth && b.stroke !== 'transparent') c.stroke();
+    c.restore();
+    return;
+  }
+  const points = bodyPoints(b);
+  if (b.kind === 'shout') {
+    c.lineJoin = 'miter';
+    c.miterLimit = 4;
+  }
   if (b.kind === 'whisper') c.setLineDash([7, 6]);
   const tail =
-    b.kind !== 'caption' &&
-    b.kind !== 'thought' &&
-    (b.tailX < 0 || b.tailY < 0 || b.tailX > b.width || b.tailY > b.height);
+    b.kind !== 'thought' && (b.tailX < 0 || b.tailY < 0 || b.tailX > b.width || b.tailY > b.height);
   let nearest = 0;
   if (tail) {
     let min = Infinity;
@@ -82,30 +94,31 @@ export function drawBalloon(c: DrawContext, b: Balloon) {
     });
   }
   c.beginPath();
-  for (let k = 0; k < points.length; k++) {
-    const i = (nearest + 4 + k) % points.length,
-      p = points[i];
-    if (k === 0) c.moveTo(p.x, p.y);
-    else if (tail && k >= 72) {
-      if (k === 72) {
-        const start = points[(nearest + 76) % 80];
-        c.lineTo(start.x, start.y);
-        if (b.kind === 'electronic') {
-          c.lineTo((start.x + b.tailX) / 2 + 10, (start.y + b.tailY) / 2);
-          c.lineTo((start.x + b.tailX) / 2 - 5, (start.y + b.tailY) / 2 + 12);
-        }
-        c.lineTo(b.tailX, b.tailY);
-      }
-    } else c.lineTo(p.x, p.y);
+  if (tail) {
+    for (let k = 0; k <= points.length - 2; k++) {
+      const p = points[(nearest + 1 + k) % points.length];
+      if (k === 0) c.moveTo(p.x, p.y);
+      else c.lineTo(p.x, p.y);
+    }
+    const start = points[(nearest + points.length - 1) % points.length];
+    if (b.kind === 'electronic') {
+      c.lineTo((start.x + b.tailX) / 2 + 10, (start.y + b.tailY) / 2);
+      c.lineTo((start.x + b.tailX) / 2 - 5, (start.y + b.tailY) / 2 + 12);
+    }
+    c.lineTo(b.tailX, b.tailY);
+  } else {
+    points.forEach((p, i) => (i === 0 ? c.moveTo(p.x, p.y) : c.lineTo(p.x, p.y)));
   }
   c.closePath();
   c.fill();
   if (b.strokeWidth && b.stroke !== 'transparent') c.stroke();
   if (b.kind === 'thought') {
-    const cx = b.width / 2,
-      cy = b.height / 2,
-      angle = Math.atan2(b.tailY - cy, b.tailX - cx),
-      start = { x: cx + Math.cos(angle) * cx, y: cy + Math.sin(angle) * cy };
+    const start = points.reduce((nearest, point) =>
+      (point.x - b.tailX) ** 2 + (point.y - b.tailY) ** 2 <
+      (nearest.x - b.tailX) ** 2 + (nearest.y - b.tailY) ** 2
+        ? point
+        : nearest,
+    );
     [0.35, 0.67, 1].forEach((t, i) => {
       c.beginPath();
       c.arc(

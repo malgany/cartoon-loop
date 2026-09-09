@@ -106,6 +106,33 @@ const expandSelection = (p: Project, ids: string[]) =>
   p.nodes.filter(
     (n) => ids.includes(n.id) || (n.type !== 'panel' && n.panelId !== null && ids.includes(n.panelId)),
   );
+const panelDefaultKeys = ['shape', 'fill', 'stroke', 'strokeWidth', 'clip'] as const;
+const balloonDefaultKeys = [
+  'fontSize',
+  'bold',
+  'italic',
+  'align',
+  'lineHeight',
+  'padding',
+  'textColor',
+  'fill',
+  'stroke',
+  'strokeWidth',
+  'shape',
+] as const;
+const remembers = (values: Record<string, unknown>, keys: readonly string[]) =>
+  Object.fromEntries(keys.filter((key) => Object.hasOwn(values, key)).map((key) => [key, values[key]]));
+
+function rememberStyleDefaults(p: Project, n: SceneNode, values: Record<string, unknown>) {
+  if (n.type === 'panel' && n.role === 'frame') {
+    Object.assign(p.styleDefaults.panel, remembers(values, panelDefaultKeys));
+  } else if (n.type === 'balloon') {
+    p.styleDefaults.balloons[n.kind] = {
+      ...p.styleDefaults.balloons[n.kind],
+      ...remembers(values, balloonDefaultKeys),
+    };
+  }
+}
 
 export const useEditor = create<State>((set, get) => ({
   project: null,
@@ -165,8 +192,10 @@ export const useEditor = create<State>((set, get) => ({
         if (
           ids.includes(n.id) &&
           (!isNodeLocked(p, n) || Object.keys(values).every((k) => k === 'locked' || k === 'hidden'))
-        )
+        ) {
           Object.assign(n, values);
+          rememberStyleDefaults(p, n, values);
+        }
     });
   },
   select(selection) {
@@ -193,6 +222,13 @@ export const useEditor = create<State>((set, get) => ({
     if (!s.project) return;
     const page = s.project.pages.find((pg) => pg.id === s.activePage) || s.project.pages[0];
     const panel = newPanel(page, preset, role);
+    if (role === 'frame') {
+      Object.assign(panel, s.project.styleDefaults.panel);
+      if (preset === 'borderless') {
+        panel.fill = 'transparent';
+        panel.strokeWidth = 0;
+      } else if (preset === 'overflow') panel.clip = false;
+    }
     if (height) panel.height = role === 'spacer' ? Math.round((height * page.width) / 800) : height;
     if (role !== 'frame') {
       panel.name = role === 'spacer' ? 'Pausa' : 'Transição';
@@ -223,6 +259,7 @@ export const useEditor = create<State>((set, get) => ({
     if (!s.project) return;
     const { panel, point } = insertionTarget(s);
     const node = newText(kind);
+    if (node.type === 'balloon') Object.assign(node, s.project.styleDefaults.balloons[node.kind]);
     node.panelId = panel?.id || null;
     const o = panel ? worldOrigin(s.project, panel) : { x: 0, y: 0 };
     node.x = panel

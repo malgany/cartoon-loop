@@ -37,6 +37,45 @@ const textStyle = {
   padding: number.min(0).max(200),
   textColor: color,
 };
+export const BALLOON_KINDS = [
+  'speech',
+  'rounded',
+  'thought',
+  'shout',
+  'whisper',
+  'electronic',
+  'wavy',
+  'caption',
+] as const;
+const balloonKind = z.enum(BALLOON_KINDS);
+const panelAppearanceSchema = z
+  .object({
+    shape: z.enum(['rect', 'rounded', 'oval', 'diagonal']),
+    fill: color,
+    stroke: color,
+    strokeWidth: number.min(0).max(40),
+    clip: z.boolean(),
+  })
+  .partial();
+const balloonAppearanceSchema = z
+  .object({
+    fontSize: textStyle.fontSize,
+    bold: textStyle.bold,
+    italic: textStyle.italic,
+    align: textStyle.align,
+    lineHeight: textStyle.lineHeight,
+    padding: textStyle.padding,
+    textColor: textStyle.textColor,
+    fill: color,
+    stroke: color,
+    strokeWidth: number.min(0).max(30),
+    shape: z.enum(['rect', 'rounded']),
+  })
+  .partial();
+const styleDefaultsSchema = z.object({
+  panel: panelAppearanceSchema,
+  balloons: z.partialRecord(balloonKind, balloonAppearanceSchema),
+});
 const panelSchema = z.object({
   ...common,
   type: z.literal('panel'),
@@ -68,7 +107,8 @@ const balloonSchema = z.object({
   panelId: z.string().nullable(),
   pageId: z.string().nullable().optional(),
   overflow: z.boolean(),
-  kind: z.enum(['speech', 'rounded', 'thought', 'shout', 'whisper', 'electronic', 'wavy', 'caption']),
+  kind: balloonKind,
+  shape: z.enum(['rect', 'rounded']).default('rounded'),
   fill: color,
   stroke: color,
   strokeWidth: number.min(0).max(30),
@@ -121,6 +161,7 @@ export const projectSchema = z.object({
   pages: z.array(pageSchema).min(1).max(LIMITS.pages),
   nodes: z.array(nodeSchema).max(LIMITS.nodes),
   assets: z.array(assetSchema).max(LIMITS.nodes),
+  styleDefaults: styleDefaultsSchema.default({ panel: {}, balloons: {} }),
 });
 export type Project = z.infer<typeof projectSchema>;
 export type Point = { x: number; y: number };
@@ -205,6 +246,7 @@ export function newProject(name: string, width = 800, height = 10000): Project {
     pages: [newPage(width, height)],
     nodes: [],
     assets: [],
+    styleDefaults: { panel: {}, balloons: {} },
   };
 }
 export const baseNode = (name: string) => ({
@@ -289,6 +331,7 @@ export function newText(kind?: Balloon['kind']): TextNode | Balloon {
         type: 'balloon',
         pageId: null,
         kind,
+        shape: 'rounded',
         fill: '#ffffff',
         stroke: '#202020',
         strokeWidth: 2,

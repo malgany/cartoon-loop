@@ -25,7 +25,9 @@ O resultado publicável fica em `dist/`. Sirva por HTTP/HTTPS; não abra `index.
 1. Crie um projeto. O padrão é uma página em branco de **800 × 10.000 px**.
 2. Escolha um quadro na biblioteca. Ajuste sua largura em colunas, altura, formato, fundo e bordas no painel direito.
 3. Arraste imagens do computador para dentro de um quadro. Soltar no espaço de trabalho cria um objeto solto. O botão Imagem usa o quadro selecionado visível ou o centro da região que você está vendo.
-4. Acrescente balões ou textos. Dê duplo clique para escrever; mova o círculo do ponteiro para direcionar a fala. A Comic Neue, incluindo negrito e itálico, acompanha a aplicação.
+4. Acrescente balões ou textos. Dê duplo clique para escrever; mova o círculo do ponteiro para direcionar a fala. A Comic Neue, incluindo negrito e itálico, acompanha a aplicação. A narração pode ter cantos quadrados ou arredondados.
+
+Os ajustes visuais de um quadro passam a ser o padrão dos próximos quadros. Fonte, alinhamento, cores, margens e contorno também são lembrados separadamente para cada tipo de balão — fala, pensamento, grito, sussurro, narração e os demais — inclusive nas outras páginas do projeto. Cada objeto continua editável; o último ajuste daquele tipo passa a valer para as próximas inserções.
 5. Ajuste o ritmo com pausas e faixas de transição. Acrescente páginas manuais quando quiser começar outra sequência.
 6. Use **Baixar projeto** para guardar uma cópia editável e **Exportar** para gerar as imagens finais.
 

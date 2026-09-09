@@ -471,12 +471,25 @@ export default function Inspector({ collapsed, onToggle }: { collapsed: boolean;
                       <div className="section-divider" />
                       <h3>{text.type === 'balloon' ? 'Fala e lettering' : 'Texto'}</h3>
                       {text.type === 'balloon' && (
-                        <Choice
-                          label="Tipo de balão"
-                          value={text.kind}
-                          onChange={(kind) => patch({ kind })}
-                          options={BALLOONS.map((b) => ({ value: b.id, label: b.name }))}
-                        />
+                        <>
+                          <Choice
+                            label="Tipo de balão"
+                            value={text.kind}
+                            onChange={(kind) => patch({ kind })}
+                            options={BALLOONS.map((b) => ({ value: b.id, label: b.name }))}
+                          />
+                          {text.kind === 'caption' && (
+                            <Choice
+                              label="Forma da narração"
+                              value={text.shape}
+                              onChange={(shape) => patch({ shape })}
+                              options={[
+                                { value: 'rect', label: 'Quadrada' },
+                                { value: 'rounded', label: 'Arredondada' },
+                              ]}
+                            />
+                          )}
+                        </>
                       )}
                       <label className="field">
                         <span>Conteúdo</span>

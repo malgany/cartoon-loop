@@ -6,6 +6,60 @@ import { alignmentTargets, snapRect } from '../src/core/snapping';
 import { moveLayer } from '../src/core/layers';
 
 describe('Edição livre e camadas', () => {
+  it('preserva compatibilidade com projetos anteriores aos padrões de estilo', () => {
+    const legacy = newProject('Projeto antigo') as unknown as Record<string, unknown>;
+    const balloon = newText('caption') as unknown as Record<string, unknown>;
+    delete legacy.styleDefaults;
+    delete balloon.shape;
+    legacy.nodes = [balloon];
+    const migrated = validateProject(legacy);
+    expect(migrated.styleDefaults).toEqual({ panel: {}, balloons: {} });
+    expect(migrated.nodes[0]).toMatchObject({ type: 'balloon', shape: 'rounded' });
+  });
+
+  it('usa o último estilo como padrão apenas no mesmo tipo de balão e entre páginas', () => {
+    useEditor.getState().load(newProject('Padrões de balão'));
+    useEditor.getState().addText('caption');
+    const caption = useEditor.getState().project!.nodes[0];
+    useEditor.getState().patch([caption.id], {
+      shape: 'rect',
+      fontSize: 36,
+      bold: true,
+      strokeWidth: 8,
+    });
+    useEditor.getState().addPage();
+    useEditor.getState().addText('caption');
+    useEditor.getState().addText('thought');
+    const balloons = useEditor.getState().project!.nodes.filter((n) => n.type === 'balloon');
+    expect(balloons[1]).toMatchObject({
+      kind: 'caption',
+      shape: 'rect',
+      fontSize: 36,
+      bold: true,
+      strokeWidth: 8,
+      pageId: useEditor.getState().activePage,
+    });
+    expect(balloons[2]).toMatchObject({
+      kind: 'thought',
+      shape: 'rounded',
+      fontSize: 28,
+      bold: false,
+      strokeWidth: 2,
+    });
+  });
+
+  it('reaproveita aparência de quadro sem remover as exceções dos presets', () => {
+    useEditor.getState().load(newProject('Padrões de quadro'));
+    useEditor.getState().addPanel();
+    const first = useEditor.getState().project!.nodes[0];
+    useEditor.getState().patch([first.id], { shape: 'rounded', strokeWidth: 8, fill: '#eeeeee' });
+    useEditor.getState().addPanel('square');
+    useEditor.getState().addPanel('borderless');
+    const panels = useEditor.getState().project!.nodes.filter((n) => n.type === 'panel');
+    expect(panels[1]).toMatchObject({ shape: 'rounded', strokeWidth: 8, fill: '#eeeeee' });
+    expect(panels[2]).toMatchObject({ shape: 'rounded', strokeWidth: 0, fill: 'transparent' });
+  });
+
   it('migra balões antigos sem mover, girar ou inverter a arte nem alterar o original', () => {
     const p = newProject('Legado');
     const panel = newPanel(p.pages[0]);
