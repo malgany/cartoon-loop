@@ -1,10 +1,10 @@
 import type { Balloon, Item, Panel, TextNode, Point } from './model';
 
 export type DrawContext = CanvasRenderingContext2D;
-export function panelPath(c: DrawContext, p: Pick<Panel, 'shape' | 'width' | 'height'>) {
+export function panelPath(c: DrawContext, p: Pick<Panel, 'shape' | 'width' | 'height'>, begin = true) {
   const w = p.width,
     h = p.height;
-  c.beginPath();
+  if (begin) c.beginPath();
   if (p.shape === 'oval') c.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, 2 * Math.PI);
   else if (p.shape === 'rounded') c.roundRect(0, 0, w, h, Math.min(24, w / 5, h / 5));
   else if (p.shape === 'diagonal') {
@@ -31,9 +31,19 @@ export function drawPanel(c: DrawContext, p: Panel) {
     c.fill();
   }
   if (p.strokeWidth > 0 && p.stroke !== 'transparent') {
-    c.lineWidth = p.strokeWidth;
+    // Canvas strokes are centered on their path. Mask the inner half so the
+    // configured thickness grows entirely outside the content boundary.
+    const pad = p.strokeWidth + 2;
+    c.save();
+    c.beginPath();
+    c.rect(-pad, -pad, p.width + pad * 2, p.height + pad * 2);
+    panelPath(c, p, false);
+    c.clip('evenodd');
+    panelPath(c, p);
+    c.lineWidth = p.strokeWidth * 2;
     c.strokeStyle = p.stroke;
     c.stroke();
+    c.restore();
   }
   c.restore();
 }

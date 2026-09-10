@@ -21,6 +21,47 @@ async function frame(page: Page) {
   await page.getByRole('button', { name: '½', exact: true }).click();
 }
 
+test('borda do quadro cresce para fora sem invadir a imagem', async ({ page }) => {
+  await page.goto('/');
+  const pixels = await page.evaluate(async () => {
+    const path = '/src/core/drawing.ts';
+    const { drawPanel, panelPath } = await import(
+      performance.getEntriesByType('resource').find((e) => new URL(e.name).pathname === path)?.name || path
+    );
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 100;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 100, 100);
+    ctx.translate(30, 30);
+    const panel = {
+      role: 'frame',
+      opacity: 1,
+      shape: 'rect',
+      width: 40,
+      height: 40,
+      fill: 'transparent',
+      gradient: null,
+      stroke: '#202020',
+      strokeWidth: 8,
+    } as const;
+    drawPanel(ctx, panel as any);
+    panelPath(ctx, panel);
+    ctx.clip();
+    ctx.fillStyle = '#102030';
+    ctx.fillRect(0, 0, panel.width, panel.height);
+    const pixel = (x: number, y: number) => [...ctx.getImageData(x, y, 1, 1).data];
+    return {
+      beyondBorder: pixel(20, 50),
+      outsideBorder: pixel(24, 50),
+      insideImage: pixel(32, 50),
+    };
+  });
+  expect(pixels.beyondBorder).toEqual([255, 255, 255, 255]);
+  expect(pixels.outsideBorder).toEqual([32, 32, 32, 255]);
+  expect(pixels.insideImage).toEqual([16, 32, 48, 255]);
+});
+
 test('alça redimensiona a arte antes de soltar e registra um único desfazer', async ({ page }) => {
   await create(page);
   await frame(page);
