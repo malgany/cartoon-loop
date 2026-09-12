@@ -21,8 +21,21 @@ import {
 } from '../core/model';
 import { drawItem, drawPanel, panelPath } from '../core/drawing';
 import { decodedAsset, loadFonts } from '../core/render';
-import { panelWidth, reflow } from '../core/layout';
 import { alignmentTargets, snapRect } from '../core/snapping';
+
+type TransformChange =
+  | { id: string; panel: true; width: number; height: number; x: number; y: number; rotation: number }
+  | {
+      id: string;
+      panel: false;
+      width: number;
+      height: number;
+      x: number;
+      y: number;
+      rotation: number;
+      flipX: boolean;
+      flipY: boolean;
+    };
 
 export function useDecoded(projectId: string, assetId?: string) {
   const [image, setImage] = useState<HTMLImageElement>();
@@ -65,7 +78,9 @@ function ItemShape({
   parentLocked?: boolean;
 }) {
   const image = useDecoded(project.id, node.type === 'image' ? node.assetId : undefined);
-  const readonly = useEditor((s) => s.readonly);
+  const readonly = useEditor((s) => s.readonly),
+    selection = useEditor((s) => s.selection),
+    parentSelected = !!node.panelId && selection.length === 1 && selection[0] === node.panelId;
   return (
     <Shape
       id={node.id}
@@ -80,7 +95,7 @@ function ItemShape({
       scaleX={node.flipX ? -1 : 1}
       scaleY={node.flipY ? -1 : 1}
       visible={!editing}
-      draggable={!node.locked && !readonly && !panning && !parentLocked}
+      draggable={!node.locked && !readonly && !panning && !parentLocked && !parentSelected}
       sceneFunc={(ctx) => {
         const c = ctx._context;
         if (node.type === 'image' && !image) {
@@ -129,9 +144,7 @@ export default function EditorCanvas({
     view = useEditor((s) => s.view),
     selection = useEditor((s) => s.selection),
     readonly = useEditor((s) => s.readonly);
-  const [resizePreview, setResizePreview] = useState<Project | null>(null);
-  const resizeDraft = useRef<Project | null>(null);
-  const project = resizePreview || savedProject;
+  const project = savedProject;
   const root = useRef<HTMLDivElement>(null),
     stage = useRef<Konva.Stage>(null),
     transformer = useRef<Konva.Transformer>(null);
@@ -224,7 +237,10 @@ export default function EditorCanvas({
     tr.nodes(
       selection
         .map((id) => project.nodes.find((n) => n.id === id))
-        .filter((n): n is Item => !!n && n.type !== 'panel' && !isNodeLocked(project, n) && n.id !== editing)
+        .filter(
+          (n): n is SceneNode =>
+            !!n && !isNodeLocked(project, n) && (n.type === 'panel' ? n.role !== 'spacer' : n.id !== editing),
+        )
         .map((n) => stage.current!.findOne(`#${n.id}`))
         .filter((n): n is Konva.Node => !!n),
     );
@@ -393,62 +409,63 @@ export default function EditorCanvas({
     setDropTarget(null);
     setGuides({});
   };
-  const resizePanel = (e: KonvaEventObject<DragEvent>, id: string, commit = false) => {
-    e.cancelBubble = true;
-    const original = savedProject.nodes.find((n) => n.id === id) as Panel;
-    const page = savedProject.pages.find((pg) => pg.id === original.pageId)!;
-    const o = worldOrigin(savedProject, original);
-    const pt = pointer();
-    let width = Math.max(30, pt.x - o.x),
-      height = Math.max(20, pt.y - o.y);
-    const snapped = snapRect({ ...o, width, height }, alignmentTargets(savedProject, [id]), view.zoom, true);
-    if (!e.evt.altKey) {
-      width += snapped.dx;
-      height += snapped.dy;
-    }
-    width = clamp(width, 30, page.width);
-    height = clamp(height, 20, page.height - (original.mode === 'flow' ? page.margin * 2 : 0));
-    const next = structuredClone(savedProject);
-    const panel = next.nodes.find((n) => n.id === id) as Panel;
-    panel.height = height;
-    if (panel.mode === 'flow') {
-      panel.edgeToEdge = false;
-      panel.span = clamp(Math.round((width + page.gapX) / (panelWidth(page, 1) + page.gapX)), 1, 12);
-    } else panel.width = width;
-    try {
-      reflow(next);
-      resizeDraft.current = next;
-      setResizePreview(next);
-      setGuides(e.evt.altKey ? {} : snapped.guides);
-    } catch {
-      // Hold the last valid geometry until the pointer returns within the limits.
-    }
-    if (commit) {
-      const final = resizeDraft.current?.nodes.find((n) => n.id === id) as Panel | undefined;
-      if (final)
-        useEditor.getState().patch([id], {
-          width: final.width,
-          height: final.height,
-          span: final.span,
-          edgeToEdge: final.edgeToEdge,
-        });
-      resizeDraft.current = null;
-      setResizePreview(null);
+  const snapTransform = (e: KonvaEventObject<MouseEvent>) => {
+    const shape = transformer.current?.nodes()[0],
+      id = shape?.id(),
+      node = project.nodes.find((n) => n.id === id);
+    if (!id || !node || !shape || e.evt.altKey || Math.abs(shape.rotation()) > 0.001) {
       setGuides({});
-      setDragging(null);
+      return;
     }
+    const width = node.width * Math.abs(shape.scaleX()),
+      height = node.height * Math.abs(shape.scaleY());
+    const parent =
+      node.type === 'panel'
+        ? positions.get(node.pageId)!
+        : node.panelId
+          ? worldOrigin(
+              project,
+              panels.find((p) => p.id === node.panelId)!,
+            )
+          : node.type === 'balloon' && node.pageId
+            ? positions.get(node.pageId)!
+            : { x: 0, y: 0 };
+    const rect = {
+      x: parent.x + shape.x() - (node.type === 'panel' ? 0 : width / 2),
+      y: parent.y + shape.y() - (node.type === 'panel' ? 0 : height / 2),
+      width,
+      height,
+    };
+    const snapped = snapRect(rect, alignmentTargets(project, [id]), view.zoom, true);
+    if (snapped.dx || snapped.dy) {
+      shape.scale({
+        x: Math.sign(shape.scaleX() || 1) * Math.max(8 / node.width, (width + snapped.dx) / node.width),
+        y: Math.sign(shape.scaleY() || 1) * Math.max(8 / node.height, (height + snapped.dy) / node.height),
+      });
+      if (node.type !== 'panel')
+        shape.position({ x: shape.x() + snapped.dx / 2, y: shape.y() + snapped.dy / 2 });
+      transformer.current?.forceUpdate();
+    }
+    setGuides(snapped.guides);
   };
   const finishTransform = () => {
     const s = useEditor.getState();
-    const changes = selection.flatMap((id) => {
+    const changes: TransformChange[] = selection.flatMap<TransformChange>((id) => {
       const node = project.nodes.find((n) => n.id === id),
         shape = stage.current?.findOne(`#${id}`);
-      if (!node || node.type === 'panel' || !shape) return [];
-      const width = Math.max(8, node.width * Math.abs(shape.scaleX())),
-        height = Math.max(8, node.height * Math.abs(shape.scaleY()));
+      if (!node || !shape) return [];
+      const minWidth = node.type === 'panel' ? 30 : 8,
+        minHeight = node.type === 'panel' ? 20 : 8,
+        width = Math.max(minWidth, node.width * Math.abs(shape.scaleX())),
+        height = Math.max(minHeight, node.height * Math.abs(shape.scaleY()));
+      if (node.type === 'panel')
+        return [
+          { id, panel: true as const, width, height, x: shape.x(), y: shape.y(), rotation: shape.rotation() },
+        ];
       return [
         {
           id,
+          panel: false as const,
           width,
           height,
           x: shape.x() - width / 2,
@@ -462,16 +479,37 @@ export default function EditorCanvas({
     for (const change of changes) {
       const shape = stage.current?.findOne(`#${change.id}`),
         node = project.nodes.find((n) => n.id === change.id)!;
-      shape?.scale({ x: node.flipX ? -1 : 1, y: node.flipY ? -1 : 1 });
-      shape?.position({ x: node.x + node.width / 2, y: node.y + node.height / 2 });
+      shape?.scale({ x: change.panel ? 1 : node.flipX ? -1 : 1, y: change.panel ? 1 : node.flipY ? -1 : 1 });
+      shape?.position(
+        change.panel ? { x: node.x, y: node.y } : { x: node.x + node.width / 2, y: node.y + node.height / 2 },
+      );
       shape?.rotation(node.rotation);
     }
-    s.run('Redimensionar objetos', (p) => {
+    s.run('Transformar seleção', (p) => {
       changes.forEach((change) => {
         const n = p.nodes.find((n) => n.id === change.id)!;
-        Object.assign(n, change);
+        if (!change.panel) {
+          if (n.type !== 'panel') {
+            const { panel: _panel, ...values } = change;
+            Object.assign(n, values);
+          }
+          return;
+        }
+        if (n.type !== 'panel') return;
+        n.height = change.height;
+        n.rotation = change.rotation;
+        if (n.mode === 'flow') {
+          const page = p.pages.find((pg) => pg.id === n.pageId)!;
+          n.edgeToEdge = false;
+          n.span = clamp(
+            Math.round((change.width + page.gapX) / ((page.width - page.margin * 2 + page.gapX) / 12)),
+            1,
+            12,
+          );
+        } else Object.assign(n, { width: change.width, x: change.x, y: change.y });
       });
     });
+    setGuides({});
   };
   const commitText = () => {
     if (editing) useEditor.getState().patch([editing], { text: draft });
@@ -692,6 +730,7 @@ export default function EditorCanvas({
                     y={panel.y}
                     width={panel.width}
                     height={panel.height}
+                    rotation={panel.rotation}
                     draggable={!panel.locked && !readonly && !isPanning}
                     onDragStart={(e) => {
                       if (e.target.id() === panel.id) beginDrag(panel.id);
@@ -750,13 +789,15 @@ export default function EditorCanvas({
             .filter(
               (n) =>
                 !n.hidden &&
-                (dragging !== n.id || !!resizePreview) &&
+                dragging !== n.id &&
                 (selection.includes(n.id) || hover === n.id || dropTarget === n.id),
             )
             .map((n) => {
               const pos = worldOrigin(project, n);
+              const editable = selection.includes(n.id) && !readonly && !n.locked && n.role !== 'spacer';
+              if (editable) return null;
               return (
-                <Group key={n.id} x={pos.x} y={pos.y}>
+                <Group key={n.id} x={pos.x} y={pos.y} rotation={n.rotation}>
                   <Rect
                     listening={false}
                     width={n.width}
@@ -772,33 +813,6 @@ export default function EditorCanvas({
                     dash={selection.includes(n.id) ? undefined : [5 / view.zoom, 4 / view.zoom]}
                     strokeWidth={1.5 / view.zoom}
                   />
-                  {selection.includes(n.id) && !readonly && !n.locked && (
-                    <Rect
-                      name="panel-resize"
-                      x={n.width - 4 / view.zoom}
-                      y={n.height - 4 / view.zoom}
-                      width={8 / view.zoom}
-                      height={8 / view.zoom}
-                      fill="#ffffff"
-                      stroke="#222222"
-                      strokeWidth={1 / view.zoom}
-                      draggable
-                      onMouseEnter={() => {
-                        if (root.current) root.current.style.cursor = 'nwse-resize';
-                      }}
-                      onMouseLeave={() => {
-                        if (root.current) root.current.style.cursor = '';
-                      }}
-                      onDragStart={(e) => {
-                        e.cancelBubble = true;
-                        resizeDraft.current = savedProject;
-                        setResizePreview(savedProject);
-                        setDragging(n.id);
-                      }}
-                      onDragMove={(e) => resizePanel(e, n.id)}
-                      onDragEnd={(e) => resizePanel(e, n.id, true)}
-                    />
-                  )}
                 </Group>
               );
             })}
@@ -852,6 +866,7 @@ export default function EditorCanvas({
               anchorFill="#ffffff"
               anchorSize={8}
               rotateAnchorOffset={24}
+              onTransform={(e) => snapTransform(e as KonvaEventObject<MouseEvent>)}
               onTransformEnd={finishTransform}
               boundBoxFunc={(old, next) =>
                 Math.abs(next.width) < 8 || Math.abs(next.height) < 8 ? old : next
@@ -860,6 +875,7 @@ export default function EditorCanvas({
           )}
           {guides.x !== undefined && (
             <Line
+              name="snap-guide-x"
               points={[guides.x, rect.y, guides.x, rect.y + rect.height]}
               stroke="#777777"
               dash={[5 / view.zoom, 4 / view.zoom]}
@@ -869,6 +885,7 @@ export default function EditorCanvas({
           )}
           {guides.y !== undefined && (
             <Line
+              name="snap-guide-y"
               points={[rect.x, guides.y, rect.x + rect.width, guides.y]}
               stroke="#777777"
               dash={[5 / view.zoom, 4 / view.zoom]}
@@ -898,12 +915,6 @@ export default function EditorCanvas({
         </div>
       )}
       {dropTarget && <div className="drop-hint">Solte para adicionar ao quadro</div>}
-      {resizePreview && (
-        <div className="drop-hint" data-testid="resize-preview">
-          {Math.round(selected?.width || 0)} × {Math.round(selected?.height || 0)} px · Alt para soltar o
-          encaixe
-        </div>
-      )}
       {editing &&
         editNode &&
         (() => {

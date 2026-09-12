@@ -89,7 +89,6 @@ export function reflow(p: Project): Project {
         frame.pageId = used[pageIndex].id;
         frame.x = frame.edgeToEdge ? 0 : x;
         frame.y = y - extents[i].top;
-        frame.rotation = 0;
         x += frame.width + root.gapX;
       });
       y += height + (group.every((n) => n.role === 'spacer') ? 0 : root.gapY);

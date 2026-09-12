@@ -180,6 +180,17 @@ describe('Modelo e histórico', () => {
     expect(target.panel).toBeNull();
     expect(target.point).toEqual({ x: 460, y: 5400 });
   });
+  it('adiciona quadro na página que está sendo visualizada', () => {
+    const s = useEditor.getState();
+    s.addPage();
+    const [first, second] = useEditor.getState().project!.pages;
+    useEditor.setState({ activePage: first.id, selection: [] });
+    s.setView({ x: -1000, y: 0, zoom: 1, width: 800, height: 800 });
+    s.addPanel('vertical');
+    const panel = useEditor.getState().project!.nodes[0] as Panel;
+    expect(panel.pageId).toBe(second.id);
+    expect(useEditor.getState().activePage).toBe(second.id);
+  });
   it('quadro invisível na arte recebe conteúdo por hit test', () => {
     const s = useEditor.getState();
     s.addPanel();

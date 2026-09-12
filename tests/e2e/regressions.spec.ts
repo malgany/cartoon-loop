@@ -20,6 +20,17 @@ async function frame(page: Page) {
   await page.getByRole('button', { name: 'Horizontal 16:9', exact: true }).click();
   await page.getByRole('button', { name: '½', exact: true }).click();
 }
+async function fixtureImage(page: Page) {
+  const b64 = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 32;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#102030';
+    ctx.fillRect(0, 0, 32, 32);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  return { name: 'imagem.png', mimeType: 'image/png', buffer: Buffer.from(b64, 'base64') };
+}
 
 test('borda do quadro cresce para fora sem invadir a imagem', async ({ page }) => {
   await page.goto('/');
@@ -62,7 +73,7 @@ test('borda do quadro cresce para fora sem invadir a imagem', async ({ page }) =
   expect(pixels.insideImage).toEqual([16, 32, 48, 255]);
 });
 
-test('alça redimensiona a arte antes de soltar e registra um único desfazer', async ({ page }) => {
+test('transformador redimensiona quadro antes de soltar e registra um único desfazer', async ({ page }) => {
   await create(page);
   await frame(page);
   await page.getByRole('button', { name: 'Quadro à direita', exact: true }).click();
@@ -74,22 +85,125 @@ test('alça redimensiona a arte antes de soltar e registra um único desfazer', 
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x - 65, y - 45, { steps: 12 });
-  await expect(page.getByTestId('resize-preview')).toBeVisible();
   const rendered = await page.evaluate((id) => {
     const node = (window as any).Konva.stages[0].findOne('#' + id);
-    return { width: node.width(), height: node.height() };
+    return { width: node.width() * Math.abs(node.scaleX()), height: node.height() * Math.abs(node.scaleY()) };
   }, n.id);
   expect(rendered.width).toBeLessThan(n.width - 50);
   expect(rendered.height).toBeLessThan(n.height - 40);
   expect((await state(page)).past).toBe(s.past);
   expect((await state(page)).p.nodes[0].width).toBe(n.width);
   await page.mouse.up();
-  await expect(page.getByTestId('resize-preview')).toBeHidden();
   const after = await state(page);
   expect(after.p.nodes[0].width).toBeCloseTo(rendered.width);
   expect(after.past).toBe(s.past + 1);
   await page.getByRole('button', { name: 'Desfazer (Ctrl+Z)' }).click();
   expect((await state(page)).p.nodes[0]).toEqual(n);
+});
+
+test('quadro selecionado oferece oito alças e rotação', async ({ page }) => {
+  await create(page);
+  await frame(page);
+  const s = await state(page),
+    panel = s.p.nodes[0];
+  const controls = await page.evaluate((id) => {
+    const stage = (window as any).Konva.stages[0];
+    const transformer = stage.findOne('Transformer');
+    return {
+      nodes: transformer.nodes().map((node: any) => node.id()),
+      anchors: transformer.find('._anchor').map((node: any) => node.name()),
+    };
+  }, panel.id);
+  expect(controls.nodes).toEqual([panel.id]);
+  expect(controls.anchors).toEqual(
+    expect.arrayContaining([
+      'top-left _anchor',
+      'top-center _anchor',
+      'top-right _anchor',
+      'middle-right _anchor',
+      'bottom-right _anchor',
+      'bottom-center _anchor',
+      'bottom-left _anchor',
+      'middle-left _anchor',
+      'rotater _anchor',
+    ]),
+  );
+});
+
+test('arrastar conteúdo com o quadro selecionado move o conjunto', async ({ page }) => {
+  await create(page);
+  await frame(page);
+  await page.getByLabel('Selecionar imagens', { exact: true }).setInputFiles(await fixtureImage(page));
+  await expect
+    .poll(async () => (await state(page)).p.nodes.filter((n: any) => n.type === 'image').length)
+    .toBe(1);
+  let s = await state(page),
+    panel = s.p.nodes[0],
+    image = s.p.nodes.find((n: any) => n.type === 'image');
+  const imageX = image.x,
+    imageY = image.y;
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  const screen = (x: number, y: number) => ({
+    x: box.x + s.view.x + x * s.view.zoom,
+    y: box.y + s.view.y + y * s.view.zoom,
+  });
+  let point = screen(panel.x + image.x + image.width / 2, panel.y + image.y + image.height / 2);
+  await page.mouse.click(point.x, point.y);
+  expect((await state(page)).selection).toEqual([panel.id]);
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.mouse.move(point.x + 45, point.y + 30, { steps: 10 });
+  await page.mouse.up();
+  s = await state(page);
+  panel = s.p.nodes[0];
+  image = s.p.nodes.find((n: any) => n.type === 'image');
+  expect(panel.mode).toBe('free');
+  expect(panel.x).toBeGreaterThan(60);
+  expect(panel.y).toBeGreaterThan(45);
+  expect(image.x).toBeCloseTo(imageX);
+  expect(image.y).toBeCloseTo(imageY);
+  point = screen(panel.x + image.x + image.width / 2, panel.y + image.y + image.height / 2);
+  await page.mouse.click(point.x, point.y);
+  expect((await state(page)).selection).toEqual([image.id]);
+});
+
+test('redimensionar imagem mostra guias de alinhamento', async ({ page }) => {
+  await create(page);
+  await frame(page);
+  await page.getByLabel('Selecionar imagens', { exact: true }).setInputFiles(await fixtureImage(page));
+  await expect
+    .poll(async () => (await state(page)).p.nodes.filter((n: any) => n.type === 'image').length)
+    .toBe(1);
+  const s = await state(page),
+    panel = s.p.nodes[0],
+    image = s.p.nodes.find((n: any) => n.type === 'image'),
+    box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await page.evaluate(async (id) => {
+    const path = '/src/core/store.ts';
+    const { useEditor } = await import(
+      performance.getEntriesByType('resource').find((e) => new URL(e.name).pathname === path)?.name || path
+    );
+    useEditor.getState().patch([id], { aspectLocked: false });
+  }, image.id);
+  const screen = (x: number, y: number) => ({
+    x: box.x + s.view.x + x * s.view.zoom,
+    y: box.y + s.view.y + y * s.view.zoom,
+  });
+  const handle = screen(panel.x + image.x + image.width, panel.y + image.y + image.height);
+  const target = screen(panel.x + panel.width - 2, panel.y + panel.height - 2);
+  await page.mouse.move(handle.x, handle.y);
+  await page.mouse.down();
+  await page.mouse.move(target.x, target.y, { steps: 15 });
+  const guides = await page.evaluate(() => {
+    const stage = (window as any).Konva.stages[0];
+    return { x: stage.find('.snap-guide-x').length, y: stage.find('.snap-guide-y').length };
+  });
+  expect(guides).toEqual({ x: 1, y: 1 });
+  await page.mouse.up();
+  const after = await state(page),
+    resized = after.p.nodes.find((n: any) => n.type === 'image');
+  expect(resized.x + resized.width).toBeCloseTo(panel.width);
+  expect(resized.y + resized.height).toBeCloseTo(panel.height);
 });
 
 test('quadro arrasta livre, alinha ao centro e permite sangria pela borda', async ({ page }) => {

@@ -4,6 +4,7 @@ import {
   placeBalloon,
   LIMITS,
   baseNode,
+  contains,
   newPanel,
   newText,
   newPage,
@@ -220,7 +221,15 @@ export const useEditor = create<State>((set, get) => ({
   addPanel(preset = 'horizontal', role = 'frame', height, point) {
     const s = get();
     if (!s.project) return;
-    const page = s.project.pages.find((pg) => pg.id === s.activePage) || s.project.pages[0];
+    const localView = visibleWorld(s.view);
+    const focus = { x: localView.x + localView.width / 2, y: localView.y + localView.height / 2 };
+    const positions = pagePositions(s.project);
+    const page =
+      s.project.pages.find((pg) =>
+        contains({ ...positions.get(pg.id)!, width: pg.width, height: pg.height }, focus),
+      ) ||
+      s.project.pages.find((pg) => pg.id === s.activePage) ||
+      s.project.pages[0];
     const panel = newPanel(page, preset, role);
     if (role === 'frame') {
       Object.assign(panel, s.project.styleDefaults.panel);
@@ -242,8 +251,15 @@ export const useEditor = create<State>((set, get) => ({
     const panels = s.project.nodes
       .filter((n): n is Panel => n.type === 'panel' && n.mode === 'flow' && sequencePages.includes(n.pageId))
       .sort((a, b) => a.order - b.order);
-    const selected = point ? undefined : panels.find((n) => s.selection.includes(n.id));
-    const localView = visibleWorld(s.view);
+    const selected = point
+      ? undefined
+      : panels.find(
+          (n) =>
+            s.selection.includes(n.id) &&
+            n.pageId === page.id &&
+            n.y + n.height >= localView.y &&
+            n.y <= localView.y + localView.height,
+        );
     const visibleY = point?.y ?? Math.max(0, localView.y + Math.min(200, localView.height / 3));
     const before = selected
       ? panels.indexOf(selected)
